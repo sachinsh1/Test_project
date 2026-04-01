@@ -1,0 +1,52 @@
+---
+- name: Manage SSH access for existing users only
+  hosts: all
+  user: sachin
+  become: yes
+
+  vars_files:
+    - users.yml
+
+  tasks:
+
+    # 🔍 Step 1: Check all users exist
+    - name: Validate users exist
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item.name }}"
+      register: user_check
+      loop: "{{ users }}"
+      failed_when: false
+
+    # ❌ Step 2: Abort if any user missing
+    - name: Abort if any user is missing
+      ansible.builtin.fail:
+        msg: "User {{ item.item.name }} does NOT exist on this server. Aborting playbook."
+      when: item.failed
+      loop: "{{ user_check.results }}"
+
+    # ✅ Step 3: Proceed only if all users exist
+    - name: Ensure .ssh directory exists
+      ansible.builtin.file:
+        path: "/home/{{ item.name }}/.ssh"
+        state: directory
+        owner: "{{ item.name }}"
+        group: "{{ item.group | default('users') }}"
+        mode: '0700'
+      loop: "{{ users }}"
+
+    - name: Add SSH key from file
+      ansible.builtin.authorized_key:
+        user: "{{ item.name }}"
+        key: "{{ lookup('file', item.key_file | default('keys/' + item.name + '.pub')) }}"
+        state: present
+        manage_dir: no
+      loop: "{{ users }}"
+
+    - name: Ensure correct permissions on authorized_keys
+      ansible.builtin.file:
+        path: "/home/{{ item.name }}/.ssh/authorized_keys"
+        owner: "{{ item.name }}"
+        group: "{{ item.group | default('users') }}"
+        mode: '0600'
+      loop: "{{ users }}"

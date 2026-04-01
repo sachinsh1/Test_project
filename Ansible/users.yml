@@ -1,0 +1,4 @@
+users:
+  - name: sachin
+    group: sachin
+    key_file: "keys/sachin.pub"
