@@ -2,3 +2,7 @@ users:
   - name: sachin
     group: sachin
     key_file: "keys/sachin.pub"
+
+  - name: honnatti
+     group: honnatti
+     key_file: "keys/honnatti.pub"
