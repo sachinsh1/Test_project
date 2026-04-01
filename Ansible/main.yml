@@ -1,5 +1,5 @@
 ---
-- name: Manage SSH access for existing users only
+- name: Manage SSH access (skip invalid users)
   hosts: all
   user: sachin
   become: yes
@@ -9,23 +9,30 @@
 
   tasks:
 
-    # 🔍 Step 1: Check all users exist
-    - name: Validate users exist
+    # Step 1: Check if users exist
+    - name: Check if users exist
       ansible.builtin.getent:
         database: passwd
         key: "{{ item.name }}"
       register: user_check
-      loop: "{{ users }}"
       failed_when: false
+      loop: "{{ users }}"
 
-    # ❌ Step 2: Abort if any user missing
-    - name: Abort if any user is missing
-      ansible.builtin.fail:
-        msg: "User {{ item.item.name }} does NOT exist on this server. Aborting playbook."
+    # Step 2: Build valid users list
+    - name: Set valid users list
+      ansible.builtin.set_fact:
+        valid_users: "{{ valid_users | default([]) + [ item.item ] }}"
+      when: not item.failed
+      loop: "{{ user_check.results }}"
+
+    # Step 3: Show skipped users
+    - name: Show skipped users
+      ansible.builtin.debug:
+        msg: "Skipping user {{ item.item.name }} - user does not exist"
       when: item.failed
       loop: "{{ user_check.results }}"
 
-    # ✅ Step 3: Proceed only if all users exist
+    # Step 4: Ensure .ssh directory exists
     - name: Ensure .ssh directory exists
       ansible.builtin.file:
         path: "/home/{{ item.name }}/.ssh"
@@ -33,20 +40,25 @@
         owner: "{{ item.name }}"
         group: "{{ item.group | default('users') }}"
         mode: '0700'
-      loop: "{{ users }}"
+      loop: "{{ valid_users }}"
+      when: valid_users is defined
 
+    # Step 5: Add SSH keys (append mode)
     - name: Add SSH key from file
       ansible.builtin.authorized_key:
         user: "{{ item.name }}"
         key: "{{ lookup('file', item.key_file | default('keys/' + item.name + '.pub')) }}"
         state: present
         manage_dir: no
-      loop: "{{ users }}"
+      loop: "{{ valid_users }}"
+      when: valid_users is defined
 
+    # Step 6: Fix permissions
     - name: Ensure correct permissions on authorized_keys
       ansible.builtin.file:
         path: "/home/{{ item.name }}/.ssh/authorized_keys"
         owner: "{{ item.name }}"
         group: "{{ item.group | default('users') }}"
         mode: '0600'
-      loop: "{{ users }}"
+      loop: "{{ valid_users }}"
+      when: valid_users is defined
