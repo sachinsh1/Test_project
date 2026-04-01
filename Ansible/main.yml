@@ -1,5 +1,5 @@
 ---
-- name: Manage SSH access (skip invalid users)
+- name: Manage SSH access (strict user validation)
   hosts: all
   become: yes
 
@@ -17,18 +17,20 @@
       failed_when: false
       loop: "{{ users }}"
 
-    # ✅ Step 2: Build valid users list (FIXED)
+    # ✅ Step 2: Build valid users list (STRICT CHECK)
     - name: Set valid users list
       ansible.builtin.set_fact:
         valid_users: "{{ valid_users | default([]) + [ item.item ] }}"
-      when: item.ansible_facts.getent_passwd is defined
+      when: item.ansible_facts.getent_passwd is defined and
+            item.item.name in item.ansible_facts.getent_passwd
       loop: "{{ user_check.results }}"
 
     # ⚠️ Step 3: Show skipped users
     - name: Show skipped users
       ansible.builtin.debug:
         msg: "Skipping user {{ item.item.name }} - user does not exist"
-      when: item.ansible_facts.getent_passwd is not defined
+      when: item.ansible_facts.getent_passwd is not defined or
+            item.item.name not in item.ansible_facts.getent_passwd
       loop: "{{ user_check.results }}"
 
     # ❌ Optional: fail if no valid users
@@ -37,7 +39,7 @@
         msg: "No valid users found. Exiting."
       when: valid_users is not defined or valid_users | length == 0
 
-    # 📁 Step 4: Ensure .ssh directory exists
+    # 📁 Step 4: Ensure .ssh directory exists (ONLY valid users)
     - name: Ensure .ssh directory exists
       ansible.builtin.file:
         path: "/home/{{ item.name }}/.ssh"
