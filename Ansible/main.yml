@@ -1,5 +1,4 @@
----
-- name: Manage SSH access (strict user validation)
+- name: Manage SSH access (optimized)
   hosts: all
   become: yes
 
@@ -8,8 +7,7 @@
 
   tasks:
 
-    # 🔍 Step 1: Check users
-    - name: Check if users exist
+    - name: Check if user exists
       ansible.builtin.getent:
         database: passwd
         key: "{{ item.name }}"
@@ -17,52 +15,38 @@
       failed_when: false
       loop: "{{ users }}"
 
-    # ✅ Step 2: Build valid users list (STRICT CHECK)
-    - name: Set valid users list
-      ansible.builtin.set_fact:
-        valid_users: "{{ valid_users | default([]) + [ item.item ] }}"
+    - name: Manage SSH for valid users
+      block:
+
+        - name: Ensure .ssh directory
+          ansible.builtin.file:
+            path: "/home/{{ item.item.name }}/.ssh"
+            state: directory
+            owner: "{{ item.item.name }}"
+            group: "{{ item.item.group | default('users') }}"
+            mode: '0700'
+
+        - name: Add public key
+          ansible.builtin.authorized_key:
+            user: "{{ item.item.name }}"
+            key: "{{ lookup('file', item.item.key_file | default('keys/' + item.item.name + '.pub')) }}"
+            state: present
+            manage_dir: no
+
+        - name: Fix authorized_keys permission
+          ansible.builtin.file:
+            path: "/home/{{ item.item.name }}/.ssh/authorized_keys"
+            owner: "{{ item.item.name }}"
+            group: "{{ item.item.group | default('users') }}"
+            mode: '0600'
+
       when: item.ansible_facts.getent_passwd is defined and
             item.item.name in item.ansible_facts.getent_passwd
       loop: "{{ user_check.results }}"
 
-    # ⚠️ Step 3: Show skipped users
     - name: Show skipped users
-      ansible.builtin.debug:
-        msg: "Skipping user {{ item.item.name }} - user does not exist"
+      debug:
+        msg: "Skipping {{ item.item.name }} - user does not exist"
       when: item.ansible_facts.getent_passwd is not defined or
             item.item.name not in item.ansible_facts.getent_passwd
       loop: "{{ user_check.results }}"
-
-    # ❌ Optional: fail if no valid users
-    - name: Fail if no valid users found
-      ansible.builtin.fail:
-        msg: "No valid users found. Exiting."
-      when: valid_users is not defined or valid_users | length == 0
-
-    # 📁 Step 4: Ensure .ssh directory exists (ONLY valid users)
-    - name: Ensure .ssh directory exists
-      ansible.builtin.file:
-        path: "/home/{{ item.name }}/.ssh"
-        state: directory
-        owner: "{{ item.name }}"
-        group: "{{ item.group | default('users') }}"
-        mode: '0700'
-      loop: "{{ valid_users }}"
-
-    # 🔑 Step 5: Add SSH key
-    - name: Add SSH key from file
-      ansible.builtin.authorized_key:
-        user: "{{ item.name }}"
-        key: "{{ lookup('file', item.key_file | default('keys/' + item.name + '.pub')) }}"
-        state: present
-        manage_dir: no
-      loop: "{{ valid_users }}"
-
-    # 🔒 Step 6: Fix permissions
-    - name: Ensure correct permissions on authorized_keys
-      ansible.builtin.file:
-        path: "/home/{{ item.name }}/.ssh/authorized_keys"
-        owner: "{{ item.name }}"
-        group: "{{ item.group | default('users') }}"
-        mode: '0600'
-      loop: "{{ valid_users }}"
